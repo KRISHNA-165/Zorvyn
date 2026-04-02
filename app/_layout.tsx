@@ -1,59 +1,116 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
+import React, { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
+import { View, StyleSheet, TouchableOpacity, StatusBar } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
+import { ShieldCheck, Lock } from 'lucide-react-native';
 
-import { useColorScheme } from '@/components/useColorScheme';
-
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
-
-export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
-  initialRouteName: '(tabs)',
-};
-
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
+import Theme from '@/constants/Theme';
+import { Typography, useThemeColors } from '@/components/AppComponents';
+import { useFinanceStore } from '@/store/useFinanceStore';
+import { requestNotificationPermissions, scheduleDailyReminder } from '@/services/notifications';
 
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
-  });
+  const { biometricsEnabled } = useFinanceStore();
+  const [isAuthenticated, setIsAuthenticated] = useState(!biometricsEnabled);
+  const colors = useThemeColors();
+  const theme = useFinanceStore((state) => state.theme) || 'dark';
 
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
+  const handleAuth = async () => {
+    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
+    if (!hasHardware || !isEnrolled) {
+      setIsAuthenticated(true);
+      return;
     }
-  }, [loaded]);
 
-  if (!loaded) {
-    return null;
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: 'Authenticate to access your Vault',
+      fallbackLabel: 'Use Passcode',
+    });
+
+    if (result.success) {
+      setIsAuthenticated(true);
+    }
+  };
+
+  useEffect(() => {
+    // Initialize Database
+    useFinanceStore.getState().init();
+
+    if (biometricsEnabled) {
+      handleAuth();
+    }
+    
+    // Initialize Notifications
+    (async () => {
+      const hasPermission = await requestNotificationPermissions();
+      if (hasPermission) {
+        await scheduleDailyReminder();
+      }
+    })();
+  }, [biometricsEnabled]);
+
+  if (!isAuthenticated) {
+    return (
+      <View style={[styles.authContainer, { backgroundColor: colors.background }]}>
+        <View style={[styles.lockIcon, { backgroundColor: colors.card }]}>
+          <Lock size={48} color={colors.primary} />
+        </View>
+        <Typography variant="h2" style={{ marginBottom: 8 }}>Vault Locked</Typography>
+        <Typography variant="body" align="center" style={{ marginBottom: 32 }}>
+          Your financial data is protected by biometric security.
+        </Typography>
+        <TouchableOpacity 
+          style={[styles.authBtn, { backgroundColor: colors.primary }]} 
+          onPress={handleAuth}
+        >
+          <ShieldCheck size={20} color="white" />
+          <Typography variant="bodyBold" color="white" style={{ marginLeft: 8 }}>Unlock with Biometrics</Typography>
+        </TouchableOpacity>
+      </View>
+    );
   }
 
-  return <RootLayoutNav />;
-}
-
-function RootLayoutNav() {
-  const colorScheme = useColorScheme();
-
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
+    <>
+      <StatusBar barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} />
+      <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>
-    </ThemeProvider>
+    </>
   );
 }
+
+const styles = StyleSheet.create({
+  authContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  lockIcon: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  authBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+});

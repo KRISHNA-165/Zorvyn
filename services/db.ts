@@ -20,12 +20,9 @@ export const initDB = async (retries = 3) => {
       if (!dbInstance) {
         dbInstance = await SQLite.openDatabaseAsync(DB_NAME);
       }
-      
-      // Basic check: can we even run a simple query?
-      await dbInstance.getFirstAsync('SELECT 1');
-      
+
       if (!isInitialized) {
-        // Attempt PRAGMAs (non-blocking if they fail)
+        // Keep initialization conservative for Android release builds.
         try {
           await dbInstance.runAsync('PRAGMA journal_mode = WAL;');
           await dbInstance.runAsync('PRAGMA foreign_keys = ON;');
@@ -33,7 +30,7 @@ export const initDB = async (retries = 3) => {
           console.warn('[DB] Non-critical PRAGMA failed:', e);
         }
 
-        // Create tables
+        // Create tables individually for better compatibility
         await dbInstance.execAsync(`
           CREATE TABLE IF NOT EXISTS transactions (
             id TEXT PRIMARY KEY NOT NULL,
@@ -43,6 +40,9 @@ export const initDB = async (retries = 3) => {
             date TEXT NOT NULL,
             note TEXT
           );
+        `);
+        
+        await dbInstance.execAsync(`
           CREATE TABLE IF NOT EXISTS goals (
             id TEXT PRIMARY KEY NOT NULL,
             name TEXT NOT NULL,
@@ -52,6 +52,7 @@ export const initDB = async (retries = 3) => {
             category TEXT
           );
         `);
+
 
         // Migrations
         const existingTableInfo: any[] = await dbInstance.getAllAsync("PRAGMA table_info(goals)");
@@ -63,7 +64,7 @@ export const initDB = async (retries = 3) => {
         if (!columnNames.includes('category')) {
           try { await dbInstance.execAsync('ALTER TABLE goals ADD COLUMN category TEXT;'); } catch (e) { console.warn('[DB] Could not add category:', e); }
         }
-        
+
         isInitialized = true;
         console.log(`[DB] Database ready after ${attempt} attempt(s)`);
       }
@@ -71,6 +72,7 @@ export const initDB = async (retries = 3) => {
       return dbInstance;
     } catch (error) {
       console.error(`[DB] Initialization attempt ${attempt} failed:`, error);
+      dbInstance = null;
       if (attempt === retries) throw error;
       await delay(500); // Wait before next attempt
     }
@@ -118,4 +120,3 @@ export const updateItemDB = async (db: SQLite.SQLiteDatabase, table: 'transactio
   const sql = `UPDATE ${table} SET ${setClause} WHERE id = ?`;
   return await db.runAsync(sql, ...cleanValues as any);
 };
-

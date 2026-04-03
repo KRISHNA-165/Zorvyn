@@ -142,8 +142,9 @@ export const useFinanceStore = create<FinanceState>()(
               dbInitialized: true,
               isLoading: false 
             });
-          } catch (err) {
-            set({ error: 'Database Initialization Failed', isLoading: false });
+          } catch (err: any) {
+            const message = err?.message || err?.toString?.() || 'Unknown database error';
+            set({ error: `Database Initialization Failed: ${message}`, isLoading: false });
             console.error(err);
           }
         },

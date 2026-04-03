@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, ScrollView, Switch, Alert, Platform, Pressable, Modal } from 'react-native';
+import { StyleSheet, View, ScrollView, Switch, Alert, Platform, Pressable, Modal, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
   User, 
@@ -16,7 +16,9 @@ import {
 } from 'lucide-react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
 import * as LocalAuthentication from 'expo-local-authentication';
+
 
 import Theme from '@/constants/Theme';
 import { Card, Typography, useThemeColors } from '@/components/AppComponents';
@@ -83,8 +85,11 @@ export default function ProfileScreen() {
     currency, setCurrency,
     biometricsEnabled, toggleBiometrics,
     notificationsEnabled, toggleNotifications,
-    transactions
+    transactions,
+    isLoading,
+    error
   } = useFinanceStore();
+
   
   const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
   
@@ -106,20 +111,83 @@ export default function ProfileScreen() {
   };
 
   const handleExport = async () => {
-    const docDir = (FileSystem as any).documentDirectory;
-    if (!docDir) {
-      Alert.alert("Error", "Export is only available on native devices.");
-      return;
-    }
-    const fileUri = docDir + 'transactions.csv';
-    const csvContent = [
-      ['Date', 'Type', 'Amount', 'Category', 'Note'],
-      ...transactions.map(t => [t.date, t.type, t.amount, t.category, t.note])
-    ].map(e => e.join(",")).join("\n");
+    try {
+      if (transactions.length === 0) {
+        Alert.alert("No Data", "There are no transactions to export.");
+        return;
+      }
 
-    await FileSystem.writeAsStringAsync(fileUri, csvContent);
-    await Sharing.shareAsync(fileUri);
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+            <style>
+              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 20px; color: #1a1a1a; }
+              .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+              .summary { display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 14px; color: #666; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+              th { background-color: #f8f9fa; text-align: left; padding: 12px; border-bottom: 2px solid #dee2e6; font-size: 12px; text-transform: uppercase; }
+              td { padding: 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+              .expense { color: #ef4444; }
+              .income { color: #10b981; }
+              .footer { margin-top: 50px; text-align: center; font-size: 10px; color: #999; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>The Vault - Transaction Report</h1>
+              <p>Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</p>
+            </div>
+            <div class="summary">
+              <span>Total Transactions: ${transactions.length}</span>
+              <span>Currency: ${currency}</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Category</th>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(t => `
+                  <tr>
+                    <td>${new Date(t.date).toLocaleDateString()}</td>
+                    <td>${t.category}</td>
+                    <td class="${t.type}">${t.type.toUpperCase()}</td>
+                    <td class="${t.type}">${currency}${t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td>${t.note || '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            <div class="footer">
+              <p>Zorvyn x Equilibrium Finance &copy; ${new Date().getFullYear()}</p>
+            </div>
+          </body>
+        </html>
+      `;
+
+      if (Platform.OS === 'web') {
+        const { uri } = await Print.printToFileAsync({ html: htmlContent });
+        const link = document.createElement('a');
+        link.href = uri;
+        link.download = `TheVault_Export_${new Date().getTime()}.pdf`;
+        link.click();
+      } else {
+        const { uri } = await Print.printToFileAsync({ html: htmlContent });
+        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      Alert.alert("Export Failed", "We were unable to generate your report. Please try again.");
+    }
   };
+
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -128,7 +196,14 @@ export default function ProfileScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        {error ? (
+          <Card style={[styles.feedbackCard, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+            <Typography variant="small" color={colors.expense}>{error}</Typography>
+          </Card>
+        ) : null}
+
         {/* User Card */}
+
         <Card style={styles.userCard}>
           <View style={[styles.avatarBox, { backgroundColor: colors.primary }]}>
             <User size={32} color="white" />
@@ -238,11 +313,12 @@ export default function ProfileScreen() {
                       { borderColor: colors.border },
                       currency === sym && { backgroundColor: colors.primary, borderColor: colors.primary }
                     ]}
-                    onPress={() => {
+                    onPress={async () => {
                       setCurrencyModalVisible(false);
-                      setCurrency(sym);
+                      await setCurrency(sym);
                     }}
                   >
+
                     <Typography variant="bodyBold" color={currency === sym ? 'white' : colors.text}>
                       {labels[sym]}
                     </Typography>
@@ -259,7 +335,15 @@ export default function ProfileScreen() {
           </Card>
         </View>
       </Modal>
+
+      {isLoading ? (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Typography variant="bodyBold" style={{ marginTop: 12 }}>Processing...</Typography>
+        </View>
+      ) : null}
     </SafeAreaView>
+
   );
 }
 
@@ -351,5 +435,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginBottom: 8,
     alignItems: 'center',
-  }
+  },
+  feedbackCard: {
+    marginBottom: Theme.spacing.md,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(6, 9, 13, 0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
 });
+

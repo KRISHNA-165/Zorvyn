@@ -1,16 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
-import { View, StyleSheet, TouchableOpacity, StatusBar } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, StatusBar, ActivityIndicator, Platform } from 'react-native';
+
 import * as LocalAuthentication from 'expo-local-authentication';
 import { ShieldCheck, Lock } from 'lucide-react-native';
+import { ThemeProvider, DarkTheme, DefaultTheme } from '@react-navigation/native';
 
 import Theme from '@/constants/Theme';
-import { Typography, useThemeColors } from '@/components/AppComponents';
+import { Typography, useThemeColors, Button } from '@/components/AppComponents';
 import { useFinanceStore } from '@/store/useFinanceStore';
 import { requestNotificationPermissions, scheduleDailyReminder } from '@/services/notifications';
 
 export default function RootLayout() {
-  const { biometricsEnabled } = useFinanceStore();
+  const { biometricsEnabled, isLoading, error, dbInitialized, init } = useFinanceStore();
   const [isAuthenticated, setIsAuthenticated] = useState(!biometricsEnabled);
   const colors = useThemeColors();
   const theme = useFinanceStore((state) => state.theme) || 'dark';
@@ -36,7 +38,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     // Initialize Database
-    useFinanceStore.getState().init();
+    init();
 
     if (biometricsEnabled) {
       handleAuth();
@@ -50,6 +52,47 @@ export default function RootLayout() {
       }
     })();
   }, [biometricsEnabled]);
+
+  if (isLoading && !dbInitialized) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Typography style={{ marginTop: 16 }}>Initializing Secure Vault...</Typography>
+      </View>
+    );
+  }
+
+  if (error && !dbInitialized) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background, padding: 30 }]}>
+        <View style={styles.errorIcon}>
+           <Lock size={40} color={colors.expense} />
+        </View>
+        <Typography variant="h3" color={colors.expense}>Vault Initialization Failed</Typography>
+        <Typography variant="body" align="center" style={{ marginTop: 12, opacity: 0.8 }}>
+          We encountered a secure storage issue while preparing your financial records.
+        </Typography>
+        
+        <View style={[styles.errorDetail, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Typography variant="small" color={colors.textSecondary} style={{ marginBottom: 4 }}>TECHNICAL DETAIL:</Typography>
+          <Typography variant="small" style={{ fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }}>
+            {error || 'Unknown Native Exception'}
+          </Typography>
+        </View>
+
+        <Button 
+          title="Retry Secure Initialization" 
+          onPress={() => init(true)} 
+          style={{ marginTop: 32, width: '100%' }} 
+        />
+        
+        <Typography variant="small" align="center" color={colors.textSecondary} style={{ marginTop: 16 }}>
+          Tip: Ensure you have granted all necessary permissions and your device storage is not full.
+        </Typography>
+      </View>
+    );
+  }
+
 
   if (!isAuthenticated) {
     return (
@@ -73,16 +116,38 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <ThemeProvider value={theme === 'dark' ? DarkTheme : DefaultTheme}>
       <StatusBar barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
-    </>
+    </ThemeProvider>
   );
 }
 
 const styles = StyleSheet.create({
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  errorDetail: {
+    width: '100%',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 24,
+  },
+
   authContainer: {
     flex: 1,
     justifyContent: 'center',

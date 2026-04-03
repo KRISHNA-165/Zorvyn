@@ -1,114 +1,94 @@
-import React, { useState, useMemo } from 'react';
-import { StyleSheet, View, ScrollView, Platform, Pressable, Alert, TextInput, Modal, KeyboardAvoidingView } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { 
-  Search, 
-  Filter as FilterIcon, 
-  TrendingUp, 
-  Trash2,
-  Pencil,
-  ChevronLeft,
-  ChevronRight,
-  X,
-  Plus
-} from 'lucide-react-native';
+import { Filter as FilterIcon, Pencil, Search, Trash2, TrendingUp, X } from 'lucide-react-native';
 import Animated, { FadeInRight } from 'react-native-reanimated';
 
 import Theme from '@/constants/Theme';
-import { Card, Typography, useThemeColors, Button } from '@/components/AppComponents';
-import { useFinanceStore, TransactionType, Transaction } from '@/store/useFinanceStore';
+import { Button, Card, Typography, useThemeColors } from '@/components/AppComponents';
 import { PREDEFINED_CATEGORIES } from '@/constants/Categories';
+import { Transaction, TransactionType, useFinanceStore } from '@/store/useFinanceStore';
 
 export default function HistoryScreen() {
   const colors = useThemeColors();
-  const { transactions, currency, deleteTransaction, editTransaction } = useFinanceStore();
-  
-  // Filter States
+  const { transactions, currency, isLoading, error, deleteTransaction, editTransaction } = useFinanceStore();
+
   const [typeFilter, setTypeFilter] = useState<TransactionType | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all');
-  const [dateRange, setDateRange] = useState<{ start: Date | null, end: Date | null }>({ start: null, end: null });
-  
-  // UI States
-  const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
-  const [isCalendarVisible, setIsCalendarVisible] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
-  
-  // Edit States
+  const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
   const [editAmount, setEditAmount] = useState('');
   const [editNote, setEditNote] = useState('');
   const [editCategory, setEditCategory] = useState('');
-  const [isCustomCategory, setIsCustomCategory] = useState(false);
 
-  const isWeb = Platform.OS === 'web';
-
-  // Derived Filtered List
   const filteredTransactions = useMemo(() => {
-    return transactions.filter(t => {
-      const tDate = new Date(t.date);
-      const matchesType = typeFilter === 'all' ? true : t.type === typeFilter;
-      const matchesCategory = selectedCategory === 'all' ? true : t.category === selectedCategory;
-      const matchesSearch = t.category.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                           t.note.toLowerCase().includes(searchQuery.toLowerCase());
-      
-      let matchesDate = true;
-      if (dateRange.start) {
-        matchesDate = matchesDate && tDate >= dateRange.start;
-      }
-      if (dateRange.end) {
-        const endOfDay = new Date(dateRange.end);
-        endOfDay.setHours(23, 59, 59, 999);
-        matchesDate = matchesDate && tDate <= endOfDay;
-      }
+    return transactions.filter((transaction) => {
+      const matchesType = typeFilter === 'all' || transaction.type === typeFilter;
+      const matchesCategory = selectedCategory === 'all' || transaction.category === selectedCategory;
+      const query = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        transaction.category.toLowerCase().includes(query) ||
+        transaction.note.toLowerCase().includes(query);
 
-      return matchesType && matchesCategory && matchesSearch && matchesDate;
+      return matchesType && matchesCategory && matchesSearch;
     });
-  }, [transactions, typeFilter, selectedCategory, searchQuery, dateRange]);
+  }, [searchQuery, selectedCategory, transactions, typeFilter]);
 
   const handleEditPress = (transaction: Transaction) => {
     setEditingTransaction(transaction);
     setEditAmount(transaction.amount.toString());
     setEditNote(transaction.note);
     setEditCategory(transaction.category);
-    setIsCustomCategory(!PREDEFINED_CATEGORIES.includes(transaction.category));
   };
 
-  const handleSaveEdit = () => {
+  const handleDelete = (id: string) => {
+    Alert.alert(
+      'Delete Transaction',
+      'Are you sure you want to permanently remove this transaction? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive', 
+          onPress: () => deleteTransaction(id) 
+        }
+      ]
+    );
+  };
+
+  const handleSaveEdit = async () => {
     if (!editingTransaction) return;
     const amount = parseFloat(editAmount);
-    if (isNaN(amount)) {
-      Alert.alert('Error', 'Please enter a valid amount');
+    if (isNaN(amount) || amount <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
       return;
     }
-    editTransaction(editingTransaction.id, {
+
+    await editTransaction(editingTransaction.id, {
       amount,
-      note: editNote,
-      category: editCategory
+      note: editNote.trim(),
+      category: editCategory.trim(),
     });
-    setEditingTransaction(null);
+
+    if (!useFinanceStore.getState().error) {
+      setEditingTransaction(null);
+    }
   };
 
-  const handleDateSelect = (date: Date) => {
-    if (!dateRange.start || (dateRange.start && dateRange.end)) {
-      setDateRange({ start: date, end: null });
-    } else {
-      if (date < dateRange.start) {
-        setDateRange({ start: date, end: dateRange.start });
-      } else {
-        setDateRange({ start: dateRange.start, end: date });
-      }
-      setIsCalendarVisible(false);
-    }
+  const handleDeleteFromEdit = () => {
+    if (!editingTransaction) return;
+    const id = editingTransaction.id;
+    setEditingTransaction(null);
+    handleDelete(id);
   };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.header}>
         <Typography variant="h2">Activity</Typography>
-        <Pressable 
-          style={[styles.filterBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => setIsFilterModalVisible(true)}
-        >
+        <Pressable style={[styles.filterBtn, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => setIsFilterModalVisible(true)}>
           <FilterIcon size={20} color={colors.primary} />
           <Typography variant="small" style={{ marginLeft: 8 }}>Filters</Typography>
         </Pressable>
@@ -124,58 +104,68 @@ export default function HistoryScreen() {
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
-          {searchQuery !== '' && (
+          {searchQuery ? (
             <Pressable onPress={() => setSearchQuery('')}>
               <X size={18} color={colors.textSecondary} />
             </Pressable>
-          )}
+          ) : null}
         </Card>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {error ? (
+          <Card style={[styles.feedbackCard, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+            <Typography variant="small" color={colors.expense}>{error}</Typography>
+          </Card>
+        ) : null}
+
         {filteredTransactions.length > 0 ? (
           <View style={styles.transactionList}>
-            {filteredTransactions.map((t, i) => {
-              const ItemContainer: any = isWeb ? View : Animated.View;
-              return (
-                <ItemContainer key={t.id} entering={isWeb ? undefined : FadeInRight.delay(i * 50)}>
-                  <Card style={styles.activityItem} variant="outline">
-                    <View style={[styles.activityIcon, { backgroundColor: t.type === 'income' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(249, 115, 22, 0.1)' }]}>
-                      <TrendingUp size={20} color={t.type === 'income' ? colors.primary : colors.accent} />
+            {filteredTransactions.map((transaction, index) => (
+              <Animated.View key={transaction.id} entering={FadeInRight.delay(index * 50)}>
+                <Card style={styles.activityItem} variant="outline">
+                  <View style={[styles.activityIcon, { backgroundColor: transaction.type === 'income' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(249, 115, 22, 0.1)' }]}>
+                    <TrendingUp size={20} color={transaction.type === 'income' ? colors.primary : colors.accent} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Typography variant="bodyBold">{transaction.category}</Typography>
+                    <Typography variant="small" color={colors.textSecondary}>{transaction.note}</Typography>
+                  </View>
+                  <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                    <Typography variant="bodyBold" color={transaction.type === 'income' ? colors.income : colors.expense}>
+                      {transaction.type === 'income' ? '+' : '-'} {currency}{transaction.amount.toFixed(2)}
+                    </Typography>
+                    <Typography variant="small" color={colors.textSecondary}>{new Date(transaction.date).toLocaleDateString()}</Typography>
+                    <View style={styles.actionRow}>
+                      <Pressable 
+                        onPress={() => handleEditPress(transaction)} 
+                        style={styles.actionIcon}
+                        hitSlop={12}
+                      >
+                        <Pencil size={16} color={colors.textSecondary} />
+                      </Pressable>
+                      <Pressable 
+                        onPress={() => handleDelete(transaction.id)} 
+                        style={styles.actionIcon}
+                        hitSlop={12}
+                      >
+                        <Trash2 size={16} color={colors.expense} />
+                      </Pressable>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Typography variant="bodyBold">{t.category}</Typography>
-                      <Typography variant="small" color={colors.textSecondary}>{t.note}</Typography>
-                    </View>
-                    <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
-                      <Typography variant="bodyBold" color={t.type === 'income' ? colors.income : colors.expense}>
-                        {t.type === 'income' ? '+' : '-'} {currency}{t.amount.toFixed(2)}
-                      </Typography>
-                      <Typography variant="small" color={colors.textSecondary}>{new Date(t.date).toLocaleDateString()}</Typography>
-                      <View style={styles.actionRow}>
-                        <Pressable onPress={() => handleEditPress(t)} style={styles.actionIcon}>
-                          <Pencil size={14} color={colors.textSecondary} />
-                        </Pressable>
-                        <Pressable onPress={() => deleteTransaction(t.id)} style={styles.actionIcon}>
-                          <Trash2 size={14} color={colors.expense} />
-                        </Pressable>
-                      </View>
-                    </View>
-                  </Card>
-                </ItemContainer>
-              );
-            })}
+                  </View>
+                </Card>
+              </Animated.View>
+            ))}
           </View>
         ) : (
           <View style={styles.emptyContainer}>
             <Typography variant="body" color={colors.textSecondary}>No transactions found.</Typography>
-            <Button 
-              title="Clear Filters" 
+            <Button
+              title="Clear Filters"
               onPress={() => {
                 setTypeFilter('all');
                 setSelectedCategory('all');
                 setSearchQuery('');
-                setDateRange({ start: null, end: null });
               }}
               style={{ marginTop: 16 }}
             />
@@ -184,8 +174,7 @@ export default function HistoryScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Filter Modal */}
-      <Modal visible={isFilterModalVisible} animationType="slide" transparent>
+      <Modal visible={isFilterModalVisible} animationType="slide" transparent onRequestClose={() => setIsFilterModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <Card style={styles.modalContent}>
             <View style={styles.modalHeader}>
@@ -195,235 +184,148 @@ export default function HistoryScreen() {
               </Pressable>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Typography variant="label" style={styles.filterLabel}>TYPE</Typography>
-              <View style={styles.filterRow}>
-                {['all', 'income', 'expense'].map(f => (
-                  <Pressable 
-                    key={f} 
-                    onPress={() => setTypeFilter(f as any)}
-                    style={[styles.chip, typeFilter === f && { backgroundColor: colors.primary }]}
-                  >
-                    <Typography variant="small" color={typeFilter === f ? 'white' : colors.text}>{f.toUpperCase()}</Typography>
-                  </Pressable>
-                ))}
-              </View>
-
-              <Typography variant="label" style={styles.filterLabel}>CATEGORY</Typography>
-              <View style={styles.filterRow}>
-                <Pressable 
-                  onPress={() => setSelectedCategory('all')}
-                  style={[styles.chip, selectedCategory === 'all' && { backgroundColor: colors.primary }]}
-                >
-                  <Typography variant="small" color={selectedCategory === 'all' ? 'white' : colors.text}>ALL</Typography>
+            <Typography variant="label" style={styles.filterLabel}>TYPE</Typography>
+            <View style={styles.filterRow}>
+              {(['all', 'income', 'expense'] as const).map((filter) => (
+                <Pressable key={filter} onPress={() => setTypeFilter(filter)} style={[styles.chip, typeFilter === filter && { backgroundColor: colors.primary }]}>
+                  <Typography variant="small" color={typeFilter === filter ? 'white' : colors.text}>{filter.toUpperCase()}</Typography>
                 </Pressable>
-                {PREDEFINED_CATEGORIES.slice(0, 5).map(cat => (
-                  <Pressable 
-                    key={cat} 
-                    onPress={() => setSelectedCategory(cat)}
-                    style={[styles.chip, selectedCategory === cat && { backgroundColor: colors.primary }]}
-                  >
-                    <Typography variant="small" color={selectedCategory === cat ? 'white' : colors.text}>{cat.toUpperCase()}</Typography>
-                  </Pressable>
-                ))}
-              </View>
+              ))}
+            </View>
 
-              <Typography variant="label" style={styles.filterLabel}>DATE RANGE</Typography>
-              <Pressable 
-                style={[styles.datePickerInput, { borderColor: colors.border }]}
-                onPress={() => setIsCalendarVisible(true)}
-              >
-                <Typography variant="body">
-                  {dateRange.start ? dateRange.start.toLocaleDateString() : 'Start'} 
-                  {' - '} 
-                  {dateRange.end ? dateRange.end.toLocaleDateString() : 'End'}
-                </Typography>
+            <Typography variant="label" style={styles.filterLabel}>CATEGORY</Typography>
+            <View style={styles.filterRow}>
+              <Pressable onPress={() => setSelectedCategory('all')} style={[styles.chip, selectedCategory === 'all' && { backgroundColor: colors.primary }]}>
+                <Typography variant="small" color={selectedCategory === 'all' ? 'white' : colors.text}>ALL</Typography>
               </Pressable>
+              {PREDEFINED_CATEGORIES.slice(0, 6).map((category) => (
+                <Pressable key={category} onPress={() => setSelectedCategory(category)} style={[styles.chip, selectedCategory === category && { backgroundColor: colors.primary }]}>
+                  <Typography variant="small" color={selectedCategory === category ? 'white' : colors.text}>{category.toUpperCase()}</Typography>
+                </Pressable>
+              ))}
+            </View>
 
-              <View style={styles.modalFooter}>
-                <Button title="Apply Filters" onPress={() => setIsFilterModalVisible(false)} />
-              </View>
-            </ScrollView>
+            <Button title="Apply Filters" onPress={() => setIsFilterModalVisible(false)} style={{ marginTop: 20 }} />
           </Card>
         </View>
       </Modal>
 
-      {/* Calendar Modal (Visual Grid) */}
-      <Modal visible={isCalendarVisible} transparent animationType="fade">
-        <View style={styles.calendarOverlay}>
-          <Card style={styles.calendarCard}>
-            <View style={styles.modalHeader}>
-              <Typography variant="h3">Pick a Date</Typography>
-              <Pressable onPress={() => setIsCalendarVisible(false)}>
-                <X size={20} color={colors.text} />
-              </Pressable>
-            </View>
-            
-            <View style={styles.calendarGrid}>
-              <View style={styles.weekDaysRow}>
-                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => (
-                  <Typography key={d} variant="small" style={styles.weekDay}>{d}</Typography>
-                ))}
-              </View>
-              <View style={styles.daysContainer}>
-                {/* Simplified Grid for "Real" Visual Feel */}
-                {Array.from({ length: 31 }, (_, i) => {
-                  const day = i + 1;
-                  const isSelected = (dateRange.start && dateRange.start.getDate() === day) || 
-                                   (dateRange.end && dateRange.end.getDate() === day);
-                  return (
-                    <Pressable 
-                      key={day} 
-                      onPress={() => handleDateSelect(new Date(2026, 3, day))} // Mocked to April 2026 for demo
-                      style={[styles.dayCell, isSelected && { backgroundColor: colors.primary }]}
-                    >
-                      <Typography variant="small" color={isSelected ? 'white' : colors.text}>{day}</Typography>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              <Typography variant="small" align="center" style={{ marginTop: 12 }} color={colors.textSecondary}>
-                Select start and end dates to set a range.
-              </Typography>
-            </View>
-            <Button title="Apply Range" onPress={() => setIsCalendarVisible(false)} style={{ marginTop: 20 }} />
-          </Card>
-        </View>
-      </Modal>
-
-      {/* Edit Modal */}
-      <Modal visible={!!editingTransaction} animationType="slide" transparent>
+      <Modal visible={!!editingTransaction} transparent animationType="fade" onRequestClose={() => setEditingTransaction(null)}>
         <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
-            <Card style={styles.modalContent}>
-              <Typography variant="h3" style={{ marginBottom: 16 }}>Edit Transaction</Typography>
-              
-              <View style={styles.editGroup}>
-                <Typography variant="label">Amount ({currency})</Typography>
-                <TextInput
-                  style={[styles.textInput, { borderColor: colors.border, color: colors.text }]}
-                  keyboardType="numeric"
-                  value={editAmount}
-                  onChangeText={setEditAmount}
-                />
-              </View>
+          <Card style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Typography variant="h3">Edit Transaction</Typography>
+              <Pressable onPress={() => setEditingTransaction(null)}>
+                <X size={24} color={colors.text} />
+              </Pressable>
+            </View>
 
-              <View style={styles.editGroup}>
-                <Typography variant="label">Category</Typography>
-                <View style={styles.categoryPicker}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ height: 40 }}>
-                    {PREDEFINED_CATEGORIES.map(cat => (
-                      <Pressable 
-                        key={cat} 
-                        onPress={() => { setEditCategory(cat); setIsCustomCategory(false); }}
-                        style={[styles.catChip, editCategory === cat && { backgroundColor: colors.primary }]}
-                      >
-                        <Typography variant="small" color={editCategory === cat ? 'white' : colors.text}>{cat}</Typography>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                  <Pressable 
-                    onPress={() => setIsCustomCategory(true)}
-                    style={[styles.catChip, isCustomCategory && { backgroundColor: colors.accent, marginTop: 8 }]}
-                  >
-                    <Typography variant="small" color={isCustomCategory ? 'white' : colors.text}>Custom Category</Typography>
-                  </Pressable>
-                </View>
-                {isCustomCategory && (
-                  <TextInput
-                    style={[styles.textInput, { borderColor: colors.border, color: colors.text, marginTop: 8 }]}
-                    placeholder="Enter custom category..."
-                    value={editCategory}
-                    onChangeText={setEditCategory}
-                  />
-                )}
-              </View>
+            <TextInput
+              style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.background }]}
+              placeholder="Amount"
+              placeholderTextColor={colors.textSecondary}
+              keyboardType="numeric"
+              value={editAmount}
+              onChangeText={setEditAmount}
+            />
+            <TextInput
+              style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.background }]}
+              placeholder="Category"
+              placeholderTextColor={colors.textSecondary}
+              value={editCategory}
+              onChangeText={setEditCategory}
+            />
+            <TextInput
+              style={[styles.input, styles.notesInput, { borderColor: colors.border, color: colors.text, backgroundColor: colors.background }]}
+              placeholder="Notes"
+              placeholderTextColor={colors.textSecondary}
+              value={editNote}
+              onChangeText={setEditNote}
+              multiline
+            />
 
-              <View style={styles.editGroup}>
-                <Typography variant="label">Note</Typography>
-                <TextInput
-                  style={[styles.textInput, { borderColor: colors.border, color: colors.text }]}
-                  value={editNote}
-                  onChangeText={setEditNote}
-                />
-              </View>
+            <View style={styles.actionButtons}>
+              <Button title="Cancel" variant="secondary" onPress={() => setEditingTransaction(null)} style={{ flex: 1 }} />
+              <Button title="Save Changes" onPress={handleSaveEdit} style={{ flex: 1 }} />
+            </View>
 
-              <View style={styles.modalFooter}>
-                <Button title="Cancel" onPress={() => setEditingTransaction(null)} variant="outline" style={{ flex: 1 }} />
-                <Button title="Save Changes" onPress={handleSaveEdit} style={{ flex: 2, marginLeft: 12 }} />
-              </View>
-            </Card>
-          </KeyboardAvoidingView>
+            <Button 
+              title="Delete Transaction" 
+              variant="outline" 
+              onPress={handleDeleteFromEdit} 
+              style={{ marginTop: 12, borderColor: colors.expense }} 
+              textStyle={{ color: colors.expense }}
+            />
+          </Card>
         </View>
       </Modal>
+
+      {isLoading ? (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    padding: Theme.spacing.md 
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: Theme.spacing.md,
   },
-  filterBtn: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    paddingHorizontal: 12, 
-    paddingVertical: 8, 
-    borderRadius: 12, 
-    borderWidth: 1 
+  filterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
   },
-  searchContainer: { paddingHorizontal: Theme.spacing.md, marginBottom: Theme.spacing.md },
-  searchCard: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    paddingHorizontal: 12, 
-    height: 50 
-  },
-  searchInput: { flex: 1, marginLeft: 8, fontSize: 16 },
+  searchContainer: { paddingHorizontal: Theme.spacing.md, paddingBottom: Theme.spacing.sm },
+  searchCard: { flexDirection: 'row', alignItems: 'center', gap: Theme.spacing.sm },
+  searchInput: { flex: 1, minHeight: 24 },
   scrollContent: { padding: Theme.spacing.md },
-  transactionList: { gap: Theme.spacing.md },
-  activityItem: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    padding: Theme.spacing.md 
+  feedbackCard: { marginBottom: Theme.spacing.md },
+  transactionList: { gap: Theme.spacing.sm },
+  activityItem: { flexDirection: 'row', alignItems: 'center', padding: Theme.spacing.md },
+  activityIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Theme.spacing.md,
   },
-  activityIcon: { 
-    width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: Theme.spacing.md 
-  },
-  actionRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  actionRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
   actionIcon: { padding: 4 },
-  emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 100 },
-  modalOverlay: { 
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' 
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingTop: 100 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: Theme.spacing.lg,
   },
-  modalContent: { 
-    padding: Theme.spacing.xl, borderBottomLeftRadius: 0, borderBottomRightRadius: 0 
+  modalContent: { padding: Theme.spacing.xl },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Theme.spacing.md,
   },
-  modalHeader: { 
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 
+  filterLabel: { marginTop: Theme.spacing.md, marginBottom: Theme.spacing.sm, letterSpacing: 1 },
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Theme.spacing.sm },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18, backgroundColor: 'rgba(148, 163, 184, 0.15)' },
+  input: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 12 },
+  notesInput: { minHeight: 90, textAlignVertical: 'top' },
+  actionButtons: { flexDirection: 'row', gap: Theme.spacing.sm, marginTop: Theme.spacing.sm },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(6, 9, 13, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  filterLabel: { marginTop: 20, marginBottom: 12 },
-  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.05)' },
-  datePickerInput: { 
-    height: 50, borderWidth: 1, borderRadius: 12, justifyContent: 'center', paddingHorizontal: 16 
-  },
-  modalFooter: { flexDirection: 'row', marginTop: 32 },
-  calendarOverlay: { 
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 
-  },
-  calendarCard: { width: '100%', padding: Theme.spacing.xl },
-  calendarGrid: { minHeight: 200 },
-  weekDaysRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  weekDay: { width: '14%', textAlign: 'center', fontWeight: '700' },
-  daysContainer: { flexDirection: 'row', flexWrap: 'wrap' },
-  dayCell: { width: '14%', height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  editGroup: { marginBottom: 16 },
-  textInput: { height: 50, borderWidth: 1, borderRadius: 12, paddingHorizontal: 16, marginTop: 8 },
-  categoryPicker: { gap: 8, marginTop: 8 },
-  catChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.05)', marginRight: 8 },
 });

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 import * as DB from '@/services/db';
 
 export type TransactionType = 'income' | 'expense';
@@ -33,15 +34,17 @@ interface FinanceState {
   monthlyIncome: number;
   monthlyExpense: number;
   
-  // Settings
+  // Settings & UX
   theme: AppTheme;
   currency: CurrencySymbol;
   biometricsEnabled: boolean;
   notificationsEnabled: boolean;
   dbInitialized: boolean;
+  isLoading: boolean;
+  error: string | null;
   
   // Actions
-  init: () => Promise<void>;
+  init: (forceRefresh?: boolean) => Promise<void>;
   addTransaction: (transaction: Omit<Transaction, 'id'>) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
   editTransaction: (id: string, updated: Partial<Omit<Transaction, 'id'>>) => Promise<void>;
@@ -85,25 +88,8 @@ const mockGoals: Goal[] = [
 
 export const useFinanceStore = create<FinanceState>()(
   persist(
-    (set, get) => ({
-      transactions: [],
-      goals: [],
-      netWorth: 0,
-      monthlyIncome: 0,
-      monthlyExpense: 0,
-      theme: 'dark',
-      currency: '$',
-      biometricsEnabled: false,
-      notificationsEnabled: true,
-      dbInitialized: false,
-
-      init: async () => {
-        if (get().dbInitialized) return;
-        const db = await DB.initDB();
-        const transactions = await DB.getAllItemsDB(db, 'transactions') as Transaction[];
-        const goals = await DB.getAllItemsDB(db, 'goals') as Goal[];
-        
-        // Calculate totals
+    (set, get) => {
+      const recalculateStats = (transactions: Transaction[]) => {
         let income = 0;
         let expense = 0;
         const now = new Date();
@@ -119,146 +105,254 @@ export const useFinanceStore = create<FinanceState>()(
         });
 
         const netWorth = transactions.reduce((acc, t) => acc + (t.type === 'income' ? t.amount : -t.amount), 0);
+        return { monthlyIncome: income, monthlyExpense: expense, netWorth };
+      };
 
-        set({ 
-          transactions, 
-          goals: goals.map(g => ({ ...g, targetAmount: (g as any).target_amount, currentAmount: (g as any).current_amount })), 
-          monthlyIncome: income, 
-          monthlyExpense: expense,
-          netWorth,
-          dbInitialized: true 
-        });
-      },
+      return {
+        transactions: [],
+        goals: [],
+        netWorth: 0,
+        monthlyIncome: 0,
+        monthlyExpense: 0,
+        theme: 'dark',
+        currency: '$',
+        biometricsEnabled: false,
+        notificationsEnabled: true,
+        dbInitialized: false,
+        isLoading: false,
+        error: null,
 
-      addTransaction: async (t) => {
-        const id = Math.random().toString(36).substr(2, 9);
-        const newT = { ...t, id };
-        const db = await DB.initDB();
-        await DB.addItemDB(db, 'transactions', newT);
-        
-        // Refresh local state (simplest way to ensure SQL and Store match)
-        const all = await DB.getAllItemsDB(db, 'transactions') as Transaction[];
-        const netWorth = all.reduce((acc, tr) => acc + (tr.type === 'income' ? tr.amount : -tr.amount), 0);
-        
-        set({ transactions: all, netWorth });
-      },
-
-      deleteTransaction: async (id) => {
-        const db = await DB.initDB();
-        await DB.deleteItemDB(db, 'transactions', id);
-        const all = await DB.getAllItemsDB(db, 'transactions') as Transaction[];
-        const netWorth = all.reduce((acc, tr) => acc + (tr.type === 'income' ? tr.amount : -tr.amount), 0);
-        set({ transactions: all, netWorth });
-      },
-
-      editTransaction: async (id, updated) => {
-        const db = await DB.initDB();
-        await DB.updateItemDB(db, 'transactions', id, updated);
-        const all = await DB.getAllItemsDB(db, 'transactions') as Transaction[];
-        const netWorth = all.reduce((acc, tr) => acc + (tr.type === 'income' ? tr.amount : -tr.amount), 0);
-        set({ transactions: all, netWorth });
-      },
-
-      updateGoal: async (id, amount) => {
-        const db = await DB.initDB();
-        await DB.updateItemDB(db, 'goals', id, { current_amount: amount });
-        const allGoals = await DB.getAllItemsDB(db, 'goals') as any[];
-        set({ goals: allGoals.map(g => ({ ...g, targetAmount: g.target_amount, currentAmount: g.current_amount })) });
-      },
-
-      addGoal: async (goal) => {
-        const id = Math.random().toString(36).substr(2, 9);
-        const db = await DB.initDB();
-        await DB.addItemDB(db, 'goals', { 
-          id, 
-          name: goal.name, 
-          target_amount: goal.targetAmount, 
-          current_amount: goal.currentAmount, 
-          icon: goal.icon, 
-          category: goal.category 
-        });
-        const allGoals = await DB.getAllItemsDB(db, 'goals') as any[];
-        set({ goals: allGoals.map(g => ({ ...g, targetAmount: g.target_amount, currentAmount: g.current_amount })) });
-      },
-
-      setTheme: (theme) => set({ theme }),
-      
-      setCurrency: async (newCurrency) => {
-        const currentCurrency = get().currency;
-        if (currentCurrency === newCurrency) return;
-
-        const symbolToIso: Record<CurrencySymbol, string> = {
-          '$': 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY', '₹': 'INR', 'A$': 'AUD', 'C$': 'CAD', 'CHF': 'CHF', '₩': 'KRW'
-        };
-
-        const oldIso = symbolToIso[currentCurrency];
-        const newIso = symbolToIso[newCurrency];
-
-        try {
-          const apiKey = process.env.EXPO_PUBLIC_EXCHANGE_RATE_API_KEY;
-          const response = await fetch(`https://v6.exchangerate-api.com/v6/${apiKey}/latest/${oldIso}`);
-          const data = await response.json();
-
-          if (data.result === 'success') {
-            const rate = data.conversion_rates[newIso];
-            const oldTransactions = get().transactions;
-            const oldGoals = get().goals;
-            
+        init: async (forceRefresh = false) => {
+          if (get().dbInitialized && !forceRefresh) return;
+          set({ isLoading: true, error: null });
+          try {
             const db = await DB.initDB();
-            // Update all transactions in DB (this is heavy but accurate)
-            for (const t of oldTransactions) {
-              await DB.updateItemDB(db, 'transactions', t.id, { amount: t.amount * rate });
+            const transactions = await DB.getAllItemsDB(db, 'transactions') as Transaction[];
+            const goalsData = await DB.getAllItemsDB(db, 'goals') as any[];
+            
+            const stats = recalculateStats(transactions);
+            const goals = goalsData.map(g => ({ ...g, targetAmount: g.target_amount, currentAmount: g.current_amount }));
+
+            set({ 
+              transactions, 
+              goals, 
+              ...stats,
+              dbInitialized: true,
+              isLoading: false 
+            });
+          } catch (err) {
+            set({ error: 'Database Initialization Failed', isLoading: false });
+            console.error(err);
+          }
+        },
+
+        addTransaction: async (t) => {
+          set({ isLoading: true, error: null });
+          try {
+            if (!['income', 'expense'].includes(t.type)) {
+              throw new Error(`Invalid transaction type: ${t.type}`);
             }
-            for (const g of oldGoals) {
-              await DB.updateItemDB(db, 'goals', g.id, { 
-                target_amount: g.targetAmount * rate, 
-                current_amount: g.currentAmount * rate 
+
+            const id = Math.random().toString(36).substr(2, 9);
+            const newT = { ...t, id };
+            const db = await DB.initDB();
+            await DB.addItemDB(db, 'transactions', newT);
+            
+            // Re-fetch all and recalculate
+            const all = await DB.getAllItemsDB(db, 'transactions') as Transaction[];
+            const stats = recalculateStats(all);
+            
+            set({ transactions: all, ...stats, isLoading: false, error: null });
+            console.log(`[useFinanceStore] Transaction added successfully: ${t.type}`);
+          } catch (err: any) {
+            console.error('[addTransaction] Error:', err);
+            set({ error: err?.message || 'Failed to add transaction', isLoading: false });
+          }
+        },
+
+
+        deleteTransaction: async (id) => {
+          set({ isLoading: true, error: null });
+          try {
+            const db = await DB.initDB();
+            await DB.deleteItemDB(db, 'transactions', id);
+            const all = await DB.getAllItemsDB(db, 'transactions') as Transaction[];
+            const stats = recalculateStats(all);
+            set({ transactions: all, ...stats, isLoading: false });
+          } catch (err) {
+            set({ error: 'Failed to delete transaction', isLoading: false });
+          }
+        },
+
+        editTransaction: async (id, updated) => {
+          set({ isLoading: true, error: null });
+          try {
+            const db = await DB.initDB();
+            await DB.updateItemDB(db, 'transactions', id, updated);
+            const all = await DB.getAllItemsDB(db, 'transactions') as Transaction[];
+            const stats = recalculateStats(all);
+            set({ transactions: all, ...stats, isLoading: false });
+          } catch (err) {
+            set({ error: 'Failed to edit transaction', isLoading: false });
+          }
+        },
+
+        updateGoal: async (id, amount) => {
+          set({ isLoading: true, error: null });
+          try {
+            const db = await DB.initDB();
+            await DB.updateItemDB(db, 'goals', id, { current_amount: amount });
+            const allGoals = await DB.getAllItemsDB(db, 'goals') as any[];
+            set({ goals: allGoals.map(g => ({ ...g, targetAmount: g.target_amount, currentAmount: g.current_amount })), isLoading: false });
+          } catch (err) {
+            set({ error: 'Failed to update goal', isLoading: false });
+          }
+        },
+
+        addGoal: async (goal) => {
+          set({ isLoading: true, error: null });
+          try {
+            const id = Math.random().toString(36).substr(2, 9);
+            const db = await DB.initDB();
+            await DB.addItemDB(db, 'goals', { 
+              id, 
+              name: goal.name, 
+              target_amount: goal.targetAmount, 
+              current_amount: goal.currentAmount, 
+              icon: goal.icon, 
+              category: goal.category 
+            });
+            const allGoals = await DB.getAllItemsDB(db, 'goals') as any[];
+            set({ goals: allGoals.map(g => ({ ...g, targetAmount: g.target_amount, currentAmount: g.current_amount })), isLoading: false });
+          } catch (err) {
+            console.error('Add Goal Error:', err);
+            set({ error: 'Failed to add goal. Please try again.', isLoading: false });
+          }
+        },
+
+        setTheme: (theme) => set({ theme }),
+        
+        setCurrency: async (newCurrency) => {
+          const currentCurrency = get().currency;
+          if (currentCurrency === newCurrency) return;
+          
+          console.log(`[setCurrency] Converting from ${currentCurrency} to ${newCurrency}`);
+          set({ isLoading: true, error: null });
+
+          const symbolToIso: Record<CurrencySymbol, string> = {
+            '$': 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY', '₹': 'INR', 'A$': 'AUD', 'C$': 'CAD', 'CHF': 'CHF', '₩': 'KRW'
+          };
+
+          const oldIso = symbolToIso[currentCurrency];
+          const newIso = symbolToIso[newCurrency];
+          const apiKey = process.env.EXPO_PUBLIC_EXCHANGE_RATE_API_KEY;
+
+          try {
+            if (!apiKey) {
+               throw new Error('API Key missing in .env (EXPO_PUBLIC_EXCHANGE_RATE_API_KEY)');
+            }
+
+            let response;
+            try {
+              response = await fetch(`https://v6.exchangerate-api.com/v6/${apiKey}/latest/${oldIso}`);
+            } catch (netErr) {
+              throw new Error('Network request failed. Please check your internet connection.');
+            }
+
+            if (!response.ok) {
+              throw new Error(`API returned HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.result === 'success') {
+              const rate = data.conversion_rates[newIso];
+              console.log(`[setCurrency] Rate found: ${rate}`);
+              
+              const db = await DB.initDB();
+              const oldTransactions = get().transactions;
+              const oldGoals = get().goals;
+
+              // Use a transaction for stability on Android (no NullPointerException)
+              await db.withTransactionAsync(async () => {
+                console.log(`[setCurrency] Transaction started: ${oldTransactions.length} items to update`);
+                
+                // Use a sequential loop for more reliable processing on Android native bridge
+                for (const t of oldTransactions) {
+                  await DB.updateItemDB(db, 'transactions', t.id, { amount: t.amount * rate });
+                }
+                for (const g of oldGoals) {
+                  await DB.updateItemDB(db, 'goals', g.id, { 
+                    target_amount: g.targetAmount * rate, 
+                    current_amount: g.currentAmount * rate 
+                  });
+                }
+              });
+
+              console.log(`[setCurrency] Transaction complete. Symbol: ${newCurrency}`);
+              set({ currency: newCurrency });
+              await get().init(true);
+              
+              Alert.alert(
+                'Success', 
+                `Currency converted! All records updated from ${currentCurrency} to ${newCurrency} at ${rate.toFixed(4)}`
+              );
+            } else {
+              throw new Error(data['error-type'] || 'API failure from server');
+            }
+          } catch (error: any) {
+            console.error("Currency conversion error:", error);
+            const msg = error?.message || 'Check connection or API key.';
+            set({ error: `Conversion Error: ${msg}`, isLoading: false });
+            
+            Alert.alert(
+              'Conversion Issue', 
+              `${msg}\n\nOnly the symbol was updated as a fallback.`,
+              [{ text: 'OK', onPress: () => set({ currency: newCurrency }) }]
+            );
+          }
+        },
+
+
+        toggleBiometrics: () => set((state) => ({ biometricsEnabled: !state.biometricsEnabled })),
+        toggleNotifications: () => set((state) => ({ notificationsEnabled: !state.notificationsEnabled })),
+
+        seedData: async () => {
+          set({ isLoading: true, error: null });
+          try {
+            const db = await DB.initDB();
+            await db.runAsync('DELETE FROM transactions');
+            await db.runAsync('DELETE FROM goals');
+            
+            for (const t of mockTransactions) {
+              await DB.addItemDB(db, 'transactions', t);
+            }
+            for (const g of mockGoals) {
+              await DB.addItemDB(db, 'goals', { 
+                id: g.id, 
+                name: g.name, 
+                target_amount: g.targetAmount, 
+                current_amount: g.currentAmount, 
+                icon: g.icon, 
+                category: g.category 
               });
             }
-
-            set({ currency: newCurrency });
-            await get().init(); // Recalculate everything from DB
+            await get().init(true);
+          } catch (err) {
+            set({ error: 'Data Seeding Failed', isLoading: false });
           }
-        } catch (error) {
-          console.error("Currency conversion error:", error);
-          set({ currency: newCurrency });
         }
-      },
-
-      toggleBiometrics: () => set((state) => ({ biometricsEnabled: !state.biometricsEnabled })),
-      toggleNotifications: () => set((state) => ({ notificationsEnabled: !state.notificationsEnabled })),
-
-      seedData: async () => {
-        const db = await DB.initDB();
-        // Clear tables
-        await db.runAsync('DELETE FROM transactions');
-        await db.runAsync('DELETE FROM goals');
-        
-        for (const t of mockTransactions) {
-          await DB.addItemDB(db, 'transactions', t);
-        }
-        for (const g of mockGoals) {
-          await DB.addItemDB(db, 'goals', { 
-            id: g.id, 
-            name: g.name, 
-            target_amount: g.targetAmount, 
-            current_amount: g.currentAmount, 
-            icon: g.icon, 
-            category: g.category 
-          });
-        }
-        await get().init();
-      }
-    }),
+      };
+    },
     {
-      name: 'equilibrium-finance-v3',
+      name: 'equilibrium-finance-v4',
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({ 
         theme: state.theme, 
         currency: state.currency, 
         biometricsEnabled: state.biometricsEnabled, 
         notificationsEnabled: state.notificationsEnabled 
-      }), // Only persist simple settings in AsyncStorage, data stays in SQLite
+      }),
     }
   )
 );

@@ -1,116 +1,92 @@
-import React from 'react';
-import { StyleSheet, View, ScrollView, Image, Pressable, Platform } from 'react-native';
+import React, { useMemo } from 'react';
+import { StyleSheet, View, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { 
-  ArrowUpRight, 
-  ArrowDownRight, 
-  TrendingUp, 
-  Zap, 
-  Settings,
-  Plus
-} from 'lucide-react-native';
-import Animated, { FadeInUp, FadeInRight } from 'react-native-reanimated';
+import { ArrowDownRight, ArrowUpRight, Plus, Settings, Zap } from 'lucide-react-native';
+import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useRouter } from 'expo-router';
 
 import Theme from '@/constants/Theme';
-import { Card, Typography, useThemeColors, Button } from '@/components/AppComponents';
+import { Card, Typography, useThemeColors } from '@/components/AppComponents';
 import { useFinanceStore } from '@/store/useFinanceStore';
-import { useRouter } from 'expo-router';
 
 export default function DashboardScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const { 
-    transactions, 
-    netWorth, 
-    monthlyIncome, 
-    monthlyExpense, 
-    currency,
-    seedData 
-  } = useFinanceStore();
+  const { netWorth, monthlyIncome, monthlyExpense, currency, transactions, seedData, isLoading, error } = useFinanceStore();
 
-  const isWeb = Platform.OS === 'web';
+  const chartHeights = useMemo(() => {
+    const expenses = transactions.filter((transaction) => transaction.type === 'expense');
+    const days = [6, 5, 4, 3, 2, 1, 0];
+    const rawData = days.map((offset) => {
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() - offset);
+      const dayKey = targetDate.toDateString();
 
-  // Calculate real weekly spending for the chart
-  const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const today = new Date();
-  const last7Days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date();
-    d.setDate(today.getDate() - (6 - i));
-    d.setHours(0, 0, 0, 0);
-    return d;
-  });
+      return expenses
+        .filter((transaction) => new Date(transaction.date).toDateString() === dayKey)
+        .reduce((sum, transaction) => sum + transaction.amount, 0);
+    });
 
-  const dailySpending = last7Days.map(day => {
-    const dayStart = day.getTime();
-    const dayEnd = dayStart + 86400000;
-    const total = transactions
-      .filter(t => {
-        const tDate = new Date(t.date).getTime();
-        return t.type === 'expense' && tDate >= dayStart && tDate < dayEnd;
+    const max = Math.max(...rawData, 1);
+    return rawData.map((value) => Math.max((value / max) * 120, 10));
+  }, [transactions]);
+
+  const growth = useMemo(() => {
+    const current = monthlyIncome - monthlyExpense;
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const previousNet = transactions
+      .filter((transaction) => {
+        const date = new Date(transaction.date);
+        return date.getMonth() === lastMonth.getMonth() && date.getFullYear() === lastMonth.getFullYear();
       })
-      .reduce((sum, t) => sum + t.amount, 0);
-    return total;
-  });
+      .reduce((sum, transaction) => sum + (transaction.type === 'income' ? transaction.amount : -transaction.amount), 0);
 
-  const maxSpending = Math.max(...dailySpending, 1);
-  const chartHeights = dailySpending.map(s => Math.max(10, (s / maxSpending) * 120));
+    if (previousNet === 0) return current > 0 ? '100.0' : '0.0';
+    return (((current - previousNet) / Math.abs(previousNet)) * 100).toFixed(1);
+  }, [monthlyExpense, monthlyIncome, transactions]);
 
-  // Calculate Net Worth Growth
-  const thirtyDaysAgo = Date.now() - 30 * 86400000;
-  const oldBalance = transactions
-    .filter(t => new Date(t.date).getTime() < thirtyDaysAgo)
-    .reduce((sum, t) => sum + (t.type === 'income' ? t.amount : -t.amount), 0);
-  
-  const growth = oldBalance !== 0 ? ((netWorth - oldBalance) / Math.abs(oldBalance) * 100).toFixed(1) : '0.0';
   const isGrowthPositive = parseFloat(growth) >= 0;
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <View style={styles.profileSection}>
-          <Image 
-            source={{ uri: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=100&auto=format&fit=crop' }} 
-            style={styles.avatar} 
-          />
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {error ? (
+          <Card style={[styles.feedbackCard, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+            <Typography variant="small" color={colors.expense}>{error}</Typography>
+          </Card>
+        ) : null}
+
+        <View style={styles.header}>
           <View>
-            <Typography variant="small" color={colors.textSecondary}>Welcome back,</Typography>
-            <Typography variant="h3">The Vault</Typography>
+            <Typography variant="label" color={colors.textSecondary}>WELCOME BACK</Typography>
+            <Typography variant="h2">Vault Overview</Typography>
+          </View>
+          <View style={styles.headerActions}>
+            <Pressable onPress={seedData} style={[styles.iconBtn, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Zap size={20} color={colors.primary} />
+            </Pressable>
+            <Pressable onPress={() => router.push('/profile')} style={[styles.iconBtn, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Settings size={20} color={colors.textSecondary} />
+            </Pressable>
           </View>
         </View>
-        <View style={styles.headerActions}>
-          <Pressable 
-            style={[styles.iconButton, { marginRight: 8 }]} 
-            onPress={() => {
-              console.log('Zap pressed');
-              seedData();
-            }}
-          >
-            <View><Zap size={20} color={colors.primary} /></View>
-          </Pressable>
-          <Pressable style={styles.iconButton} onPress={() => router.push('/profile')}>
-            <View><Settings size={20} color={colors.textSecondary} /></View>
-          </Pressable>
-        </View>
-      </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Net Worth Card */}
-        <Card style={[styles.netWorthCard, { backgroundColor: colors.primary }]}>
-          <Typography variant="label" color="rgba(255,255,255,0.8)">CURRENT NET WORTH</Typography>
-          <View style={styles.balanceRow}>
+        <Card style={[styles.balanceCard, { backgroundColor: colors.primary }]}>
+          <View>
+            <Typography variant="label" color="rgba(255,255,255,0.7)">TOTAL NET WORTH</Typography>
             <Typography variant="h1" style={styles.balanceText}>
               {currency}{netWorth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </Typography>
           </View>
-          <View style={[styles.growthBadge, { backgroundColor: isGrowthPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)' }]}>
-            {isGrowthPositive ? <ArrowUpRight size={14} color="#10B981" /> : <ArrowDownRight size={14} color="#EF4444" />}
-            <Typography variant="small" color={isGrowthPositive ? "#10B981" : "#EF4444"} style={{ marginLeft: 4 }}>
+          <View style={styles.growthBadge}>
+            {isGrowthPositive ? <ArrowUpRight size={14} color="white" /> : <ArrowDownRight size={14} color="white" />}
+            <Typography variant="small" color="white" style={{ marginLeft: 4 }}>
               {isGrowthPositive ? '+' : ''}{growth}% from last month
             </Typography>
           </View>
         </Card>
 
-        {/* Aggregate Metrics */}
         <View style={styles.metricsRow}>
           <Card style={styles.metricCard}>
             <View style={[styles.metricIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
@@ -119,7 +95,7 @@ export default function DashboardScreen() {
             <Typography variant="small">TOTAL INCOME</Typography>
             <Typography variant="h3">{currency}{monthlyIncome.toLocaleString(undefined, { minimumFractionDigits: 2 })}</Typography>
           </Card>
-          
+
           <Card style={styles.metricCard}>
             <View style={[styles.metricIcon, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
               <ArrowDownRight size={18} color={colors.expense} />
@@ -129,173 +105,85 @@ export default function DashboardScreen() {
           </Card>
         </View>
 
-        {/* Weekly Spending Chart */}
         <View style={styles.sectionHeader}>
           <Typography variant="h3">Weekly Spending</Typography>
-          <Typography variant="small" color={colors.primary}>View Report</Typography>
+          <Typography variant="small" color={colors.primary}>Last 7 Days</Typography>
         </View>
 
         <Card style={styles.chartCard} variant="outline">
           <View style={styles.chartBars}>
-            {chartHeights.map((h, i) => {
-              const BarContainer: any = isWeb ? View : Animated.View;
-              const isToday = i === 6;
-              return (
-                <BarContainer 
-                  key={i} 
-                  entering={isWeb ? undefined : FadeInUp.delay(i * 100).springify()}
-                  style={[
-                    styles.bar, 
-                    { height: h, backgroundColor: isToday ? colors.primary : colors.border }
-                  ]} 
-                />
-              );
-            })}
-          </View>
-          <View style={styles.chartLabels}>
-            {last7Days.map(d => (
-              <Typography key={d.toISOString()} variant="small" style={{ fontSize: 10 }}>
-                {weekDays[d.getDay()]}
-              </Typography>
+            {chartHeights.map((height, index) => (
+              <Animated.View
+                key={index}
+                entering={FadeInUp.delay(index * 100).springify()}
+                style={[styles.bar, { height, backgroundColor: index === 6 ? colors.primary : colors.border }]}
+              />
             ))}
           </View>
+          <View style={styles.chartLabels}>
+            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, index) => (
+              <Typography key={`${label}-${index}`} variant="small" color={colors.textSecondary}>{label}</Typography>
+            ))}
+          </View>
+
         </Card>
-
-        {/* Recent Activity */}
-        <View style={styles.sectionHeader}>
-          <Typography variant="h3">Recent Activity</Typography>
-          <Pressable onPress={() => router.push('/history')}>
-            <Typography variant="small" color={colors.primary}>See All</Typography>
-          </Pressable>
-        </View>
-
-        <View style={styles.activityList}>
-          {transactions && transactions.length > 0 ? (
-            transactions.slice(0, 3).map((t, i) => {
-              const ItemContainer: any = isWeb ? View : Animated.View;
-              return (
-                <ItemContainer key={t.id} entering={isWeb ? undefined : FadeInRight.delay(i * 100)}>
-                  <Card style={styles.activityItem} variant="outline">
-                    <View style={[styles.activityIcon, { backgroundColor: t.type === 'income' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(249, 115, 22, 0.1)' }]}>
-                      <TrendingUp size={20} color={t.type === 'income' ? colors.primary : colors.accent} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Typography variant="bodyBold">{t.category}</Typography>
-                      <Typography variant="small">{t.note}</Typography>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Typography variant="bodyBold" color={t.type === 'income' ? colors.income : colors.expense}>
-                        {t.type === 'income' ? '+' : '-'} {currency}{t.amount.toFixed(2)}
-                      </Typography>
-                      <Typography variant="small">{new Date(t.date).toLocaleDateString()}</Typography>
-                    </View>
-                  </Card>
-                </ItemContainer>
-              );
-            })
-          ) : (
-            <Card style={styles.emptyCard} variant="outline">
-              <Typography variant="body" align="center">No recent activity found.</Typography>
-              <Button 
-                title="Seed Mock Data" 
-                onPress={seedData} 
-                style={{ marginTop: 12 }} 
-              />
-            </Card>
-          )}
-        </View>
 
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Floating Add Button */}
-      <Pressable 
-        style={[styles.fab, { backgroundColor: colors.primary }]}
-        onPress={() => router.push('/add')}
-      >
-        <View><Plus size={32} color="white" /></View>
+      <Pressable style={[styles.fab, { backgroundColor: colors.primary }]} onPress={() => router.push('/add')}>
+        <Plus size={30} color="white" />
       </Pressable>
+
+      {isLoading ? (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: Theme.spacing.md,
   },
-  profileSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Theme.spacing.md,
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-  },
-  headerActions: {
-    flexDirection: 'row',
-  },
-  iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'transparent',
+  headerActions: { flexDirection: 'row', gap: 8 },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 10,
-    ...Platform.select({
-      web: { cursor: 'pointer' }
-    }) as any,
+    borderWidth: 1,
   },
-  scrollContent: {
-    padding: Theme.spacing.md,
-  },
-  netWorthCard: {
-    padding: Theme.spacing.xl,
-    marginBottom: Theme.spacing.lg,
-  },
-  balanceRow: {
-    marginTop: Theme.spacing.sm,
-    marginBottom: Theme.spacing.md,
-  },
-  balanceText: {
-    fontSize: 42,
-    fontWeight: '700',
-    letterSpacing: -1,
-    color: '#FFFFFF',
-  },
+  scrollContent: { padding: Theme.spacing.md },
+  feedbackCard: { marginBottom: Theme.spacing.md },
+  balanceCard: { padding: Theme.spacing.xl, marginBottom: Theme.spacing.lg },
+  balanceText: { color: 'white', marginTop: 8 },
   growthBadge: {
+    alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 20,
+    marginTop: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
-  metricsRow: {
-    flexDirection: 'row',
-    gap: Theme.spacing.md,
-    marginBottom: Theme.spacing.xl,
-  },
-  metricCard: {
-    flex: 1,
-    padding: Theme.spacing.md,
-  },
+  metricsRow: { flexDirection: 'row', gap: Theme.spacing.md, marginBottom: Theme.spacing.lg },
+  metricCard: { flex: 1, padding: Theme.spacing.md },
   metricIcon: {
     width: 36,
     height: 36,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -303,47 +191,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Theme.spacing.md,
   },
-  chartCard: {
-    height: 180,
-    padding: Theme.spacing.lg,
-    marginBottom: Theme.spacing.xl,
-  },
-  chartBars: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    paddingHorizontal: 10,
-  },
-  bar: {
-    width: 18,
-    borderRadius: 4,
-  },
-  chartLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 12,
-  },
-  activityList: {
-    gap: Theme.spacing.sm,
-  },
-  activityItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Theme.spacing.md,
-  },
-  activityIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: Theme.spacing.md,
-  },
-  emptyCard: {
-    alignItems: 'center',
-    padding: Theme.spacing.xl,
-  },
+  chartCard: { padding: Theme.spacing.lg },
+  chartBars: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', height: 120, marginBottom: 16 },
+  bar: { width: '8%', borderRadius: 4 },
+  chartLabels: { flexDirection: 'row', justifyContent: 'space-between' },
   fab: {
     position: 'absolute',
     bottom: 24,
@@ -353,13 +204,16 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
-    zIndex: 100,
-    ...Platform.select({
-      web: { cursor: 'pointer' }
-    }) as any,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(6, 9, 13, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

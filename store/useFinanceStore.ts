@@ -55,7 +55,9 @@ interface FinanceState {
   toggleBiometrics: () => void;
   toggleNotifications: () => void;
   seedData: () => Promise<void>;
+  clearError: () => void;
 }
+
 
 const mockTransactions: Transaction[] = [
   // Current Month
@@ -317,7 +319,10 @@ export const useFinanceStore = create<FinanceState>()(
         toggleBiometrics: () => set((state) => ({ biometricsEnabled: !state.biometricsEnabled })),
         toggleNotifications: () => set((state) => ({ notificationsEnabled: !state.notificationsEnabled })),
 
+        clearError: () => set({ error: null }),
+
         seedData: async () => {
+
           set({ isLoading: true, error: null });
           try {
             const db = await DB.initDB();

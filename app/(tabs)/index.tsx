@@ -12,7 +12,8 @@ import { useFinanceStore } from '@/store/useFinanceStore';
 export default function DashboardScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const { netWorth, monthlyIncome, monthlyExpense, currency, transactions, seedData, isLoading, error } = useFinanceStore();
+  const { netWorth, monthlyIncome, monthlyExpense, currency, transactions, seedData, isLoading, error, clearError } = useFinanceStore();
+
 
   const chartHeights = useMemo(() => {
     const expenses = transactions.filter((transaction) => transaction.type === 'expense');
@@ -52,10 +53,14 @@ export default function DashboardScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {error ? (
-          <Card style={[styles.feedbackCard, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
-            <Typography variant="small" color={colors.expense}>{error}</Typography>
-          </Card>
+          <Pressable onPress={clearError}>
+            <Card style={[styles.feedbackCard, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+              <Typography variant="small" color={colors.expense}>{error}</Typography>
+              <Typography variant="small" color={colors.textSecondary} style={{ fontSize: 10, marginTop: 4 }}>Tap to dismiss</Typography>
+            </Card>
+          </Pressable>
         ) : null}
+
 
         <View style={styles.header}>
           <View>

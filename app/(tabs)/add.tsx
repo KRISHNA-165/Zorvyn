@@ -14,7 +14,8 @@ const WEEK_DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 export default function AddTransactionScreen() {
   const router = useRouter();
   const colors = useThemeColors();
-  const { addTransaction, currency, isLoading, error } = useFinanceStore();
+  const { addTransaction, currency, isLoading, error, clearError } = useFinanceStore();
+
 
   const [amount, setAmount] = useState('0.00');
   const [type, setType] = useState<TransactionType>('expense');
@@ -150,10 +151,14 @@ export default function AddTransactionScreen() {
 
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {error ? (
-          <Card style={[styles.feedbackCard, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
-            <Typography variant="small" color={colors.expense}>{error}</Typography>
-          </Card>
+          <Pressable onPress={clearError}>
+            <Card style={[styles.feedbackCard, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+              <Typography variant="small" color={colors.expense}>{error}</Typography>
+              <Typography variant="small" color={colors.textSecondary} style={{ fontSize: 10, marginTop: 4 }}>Tap to dismiss</Typography>
+            </Card>
+          </Pressable>
         ) : null}
+
 
         <View style={styles.amountContainer}>
           <Typography variant="label" align="center">TRANSACTION AMOUNT</Typography>
